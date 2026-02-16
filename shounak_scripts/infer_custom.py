@@ -1,5 +1,6 @@
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -9,6 +10,34 @@ import numpy as np
 import torch
 from mmcv.utils import Config, DictAction
 from torchvision import transforms
+
+# NOTE:
+# LATR -> utils.utils imports scipy at import-time. Older scipy releases rely on
+# NumPy aliases/attributes removed in NumPy>=2.0 (e.g. np.int, np.typeDict).
+# Patch them before importing project modules so this script can still start.
+def _patch_numpy_compat() -> None:
+    alias_map = {
+        "bool": bool,
+        "int": int,
+        "float": float,
+        "complex": complex,
+        "object": object,
+        "str": str,
+    }
+    for alias, target in alias_map.items():
+        if not hasattr(np, alias):
+            setattr(np, alias, target)
+
+    # Old SciPy sometimes expects these dictionaries.
+    if not hasattr(np, "typeDict"):
+        np.typeDict = np.sctypeDict
+
+
+_patch_numpy_compat()
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from models.latr import LATR
 from utils.utils import (
@@ -48,7 +77,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--score-thresh", type=float, default=0.3, help="Confidence threshold for lane queries.")
     parser.add_argument("--max-images", type=int, default=-1, help="Max number of images to run. -1 means all.")
-    parser.add_argument("--device", default="cpu", help="Inference device, e.g. cuda:0 or cpu.")
+    parser.add_argument("--device", default="cuda:0", help="Inference device, e.g. cuda:0 or cpu.")
     parser.add_argument(
         "--cfg-options",
         nargs="+",
@@ -329,4 +358,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
