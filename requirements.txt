@@ -12,6 +12,6 @@ PyYAML==5.3.1
 scikit_learn==0.23.2
 tensorboard==2.3.0
 gdown==4.4.0
-ortools==9.2.9972
+ortools
 geffnet==1.0.2
 tensorboardX==2.5

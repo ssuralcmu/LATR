@@ -165,6 +165,37 @@ If you find LATR is useful for your research, please consider citing the paper:
   title={LATR: 3D Lane Detection from Monocular Images with Transformer},
   author={Luo, Yueru and Zheng, Chaoda and Yan, Xu and Kun, Tang and Zheng, Chao and Cui, Shuguang and Li, Zhen},
   journal={arXiv preprint arXiv:2308.04583},
+  
   year={2023}
 }
 ```
+  
+  
+
+## Custom Inference on Your Own Images
+
+You can run a pretrained checkpoint on custom images and save both: 
+1) projected 3D lanes overlaid on the image, and 
+2) a 3D lane plot.
+
+Use:
+
+```bash
+python shounak_scripts/infer_custom.py \
+  --config config/release_iccv/latr_1000_baseline.py \
+  --checkpoint pretrained_models/openlane.pth \
+  --input-dir shounak_scripts \
+  --output-dir out1
+```
+
+Calibration is optional:
+- `--calib-dir`: one calibration JSON per image (same file stem), or
+- `--calib-json`: one shared calibration JSON for all images.
+
+Each calibration JSON can include either:
+- `intrinsic` + `extrinsic` (preferred), or
+- `intrinsic`/`calibration` + `cam_pitch` + `cam_height`.
+
+If calibration is not provided, config defaults are used.
+
+
