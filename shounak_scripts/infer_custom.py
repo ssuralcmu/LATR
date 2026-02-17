@@ -187,7 +187,8 @@ def build_extra_dict(cfg: Config, lidar2img: np.ndarray, device: torch.device) -
     seg_label = torch.zeros((1, h, w), dtype=torch.float32, device=device)
     seg_idx_label = torch.zeros((max_lanes, h, w), dtype=torch.float32, device=device)
     ground_lanes = torch.zeros((max_lanes, anchor_dim), dtype=torch.float32, device=device)
-    ground_lanes_dense = torch.zeros((max_lanes, 3 * 200), dtype=torch.float32, device=device)
+    num_y_steps_dense = len(np.asarray(cfg.anchor_y_steps_dense, dtype=np.float32))
+    ground_lanes_dense = torch.zeros((max_lanes, 3 * num_y_steps_dense), dtype=torch.float32, device=device)
 
     extra_dict = {
         "seg_label": seg_label.unsqueeze(0),
@@ -291,6 +292,12 @@ def main() -> None:
     cfg = Config.fromfile(args.config)
     if args.cfg_options is not None:
         cfg.merge_from_dict(args.cfg_options)
+
+    if not hasattr(cfg, "anchor_y_steps_dense"):
+        cfg.anchor_y_steps_dense = np.linspace(3, 103, 200, dtype=np.float32)
+    else:
+        cfg.anchor_y_steps_dense = np.asarray(cfg.anchor_y_steps_dense, dtype=np.float32)
+
 
     device = torch.device(args.device if torch.cuda.is_available() or "cpu" in args.device else "cpu")
 
