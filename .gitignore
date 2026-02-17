@@ -1,2 +1,6 @@
 *pyc
 *pth
+out1/*
+shounak_scripts/wz_front_camera_images/
+*.png
+*.json

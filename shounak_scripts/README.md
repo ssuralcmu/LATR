@@ -1,0 +1,5 @@
+python shounak_scripts/infer_custom.py   --config config/release_iccv/once.py   --checkpoint pretrained_models/once.pth   --input-dir /home/nishad/Documents/shounak_real_world_lane_boundary/dataset/WorkZone3D/image_1  --output-dir workzone3d_image1_lanes_once
+
+python shounak_scripts/infer_custom.py   --config config/release_iccv/apollo_standard.py   --checkpoint pretrained_models/apollo_standard.pth   --input-dir /home/nishad/Documents/shounak_real_world_lane_boundary/dataset/WorkZone3D/image_1/  --output-dir workzone3d_image1_lanes_apollo
+
+python shounak_scripts/infer_custom.py   --config config/release_iccv/latr_1000_baseline.py   --checkpoint pretrained_models/openlane.pth   --input-dir /home/nishad/Documents/shounak_real_world_lane_boundary/dataset/WorkZone3D/image_1/  --output-dir workzone3d_image1_lanes_openlane

@@ -3,7 +3,7 @@ import json
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-
+from tqdm import tqdm
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
@@ -77,7 +77,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--score-thresh", type=float, default=0.3, help="Confidence threshold for lane queries.")
     parser.add_argument("--max-images", type=int, default=-1, help="Max number of images to run. -1 means all.")
-    parser.add_argument("--device", default="cuda:0", help="Inference device, e.g. cuda:0 or cpu.")
+    parser.add_argument("--device", default="cuda:1", help="Inference device, e.g. cuda:0 or cpu.")
     parser.add_argument(
         "--cfg-options",
         nargs="+",
@@ -323,7 +323,7 @@ def main() -> None:
         raise FileNotFoundError(f"No images found in {input_dir} with extensions {args.img_exts}")
 
     with torch.no_grad():
-        for idx, image_path in enumerate(image_paths):
+        for idx, image_path in tqdm(enumerate(image_paths)):
             image_bgr = cv2.imread(str(image_path))
             if image_bgr is None:
                 print(f"[WARN] Skip unreadable image: {image_path}")
