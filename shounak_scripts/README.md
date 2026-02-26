@@ -37,3 +37,12 @@ python shounak_scripts/fit_workzone_object_polylines.py \
   --input-dir /home/nishad/Documents/shounak_real_world_lane_boundary/dataset/WorkZone3D/label_2 \
   --output-dir /home/nishad/Documents/shounak_real_world_lane_boundary/dataset/WorkZone3D/workzone_polylines \
   --class-names Channelizer Cone Barrel
+
+
+# Visualize all
+
+python3 shounak_scripts/visualize_all_polylines.py \
+  --workzone-dir /home/nishad/Documents/shounak_real_world_lane_boundary/dataset/WorkZone3D/workzone_polylines \
+  --lane-dir /home/nishad/Documents/shounak_real_world_lane_boundary/LATR/workzone3d_image1_lanes_once/polylines \
+  --ego-dir /home/nishad/Documents/shounak_real_world_lane_boundary/dataset/WorkZone3D/future_poses_polylines \
+  --output-dir /home/nishad/Documents/shounak_real_world_lane_boundary/LATR/viz_polylines
