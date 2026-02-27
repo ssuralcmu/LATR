@@ -226,9 +226,35 @@ def _parse_kitti_calib(calib_path: Path) -> Dict[str, np.ndarray]:
             if key == "Tr_velo_to_cam":
                 calib["Tr_velo_to_cam_default"] = calib[key]
 
-    if "P1" not in calib:
-        raise ValueError(f"P1 not found in calib file: {calib_path}")
     return calib
+
+def _to4x4(m34: np.ndarray) -> np.ndarray:
+    out = np.eye(4, dtype=np.float64)
+    out[:3, :4] = m34.reshape(3, 4)
+    return out
+
+
+def _resolve_tr_velo_to_cam(calib: Dict[str, np.ndarray], cam_id: int) -> Optional[np.ndarray]:
+    key = f"Tr_velo_to_cam_{cam_id}"
+    if key in calib:
+        return calib[key]
+    if cam_id == 2 and "Tr_velo_to_cam" in calib:
+        return calib["Tr_velo_to_cam"]
+    if cam_id == 2 and "Tr_velo_to_cam_default" in calib:
+        return calib["Tr_velo_to_cam_default"]
+    return None
+
+
+def _camera_transform(calib: Dict[str, np.ndarray], src_cam_id: int, dst_cam_id: int) -> Optional[np.ndarray]:
+    if src_cam_id == dst_cam_id:
+        return np.eye(4, dtype=np.float64)
+
+    t_src_velo = _resolve_tr_velo_to_cam(calib, src_cam_id)
+    t_dst_velo = _resolve_tr_velo_to_cam(calib, dst_cam_id)
+    if t_src_velo is None or t_dst_velo is None:
+        return None
+
+    return _to4x4(t_dst_velo) @ np.linalg.inv(_to4x4(t_src_velo))
 
 
 def _find_file_for_key(folder: Path, key: str, suffixes: List[str]) -> Optional[Path]:
@@ -266,36 +292,40 @@ def _project_fru_points_with_kitti_calib(
     points_fru: np.ndarray,
     calib: Dict[str, np.ndarray],
     source_frame: str,
+    source_camera_id: int,
+    projection_camera_id: int,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Project FRU points with KITTI calib.
 
     - If source frame is camera_kitti, points are transformed directly to camera frame.
     - Otherwise, points are treated as ego/ground frame and projected via Tr_velo_to_cam(+R0_rect).
     """
-    p1 = calib["P1"]
+    p_key = f"P{projection_camera_id}"
+    p = calib.get(p_key)
+    if p is None:
+        raise ValueError(f"{p_key} not found in calib file")
 
     if source_frame == "camera_kitti":
         cam_pts = _fru_to_camera_kitti(points_fru)
-        return _project_camera_points(p1, cam_pts)
+        cam_tf = _camera_transform(calib, source_camera_id, projection_camera_id)
+        if cam_tf is not None:
+            cam_xyz1 = np.concatenate([cam_pts, np.ones((cam_pts.shape[0], 1), dtype=np.float64)], axis=1)
+            cam_pts = (cam_tf @ cam_xyz1.T).T[:, :3]
+        return _project_camera_points(p, cam_pts)
 
     pts_flu = _fru_to_flu(points_fru)
     xyz1 = np.concatenate([pts_flu, np.ones((pts_flu.shape[0], 1), dtype=np.float64)], axis=1)
 
-    tr = calib.get("Tr_velo_to_cam_1")
-    if tr is None:
-        tr = calib.get("Tr_velo_to_cam") or calib.get("Tr_velo_to_cam_default")
-
+    tr = _resolve_tr_velo_to_cam(calib, projection_camera_id)
     if tr is None:
         # Fall back to direct FRU->camera conversion if no extrinsics are available.
         cam_pts = _fru_to_camera_kitti(points_fru)
-        return _project_camera_points(p1, cam_pts)
-
+        return _project_camera_points(p, cam_pts)
     cam_pts = (tr @ xyz1.T).T
     r0 = calib.get("R0_rect")
     if r0 is not None:
         cam_pts = (r0 @ cam_pts.T).T
-    return _project_camera_points(p1, cam_pts)
-
+    return _project_camera_points(p, cam_pts)
 
 def _draw_projected_polyline(image: np.ndarray, uv: np.ndarray, valid_mask: np.ndarray, color_bgr: Tuple[int, int, int], thickness: int) -> None:
     h, w = image.shape[:2]
@@ -371,6 +401,20 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("../dataset/WorkZone3D/calib"),
         help="Directory with KITTI calibration txt files. P1 is used for projection.",
+    )
+    parser.add_argument(
+        "--proj-camera-id",
+        type=int,
+        default=1,
+        choices=[0, 1, 2, 3],
+        help="Camera id for image projection and P-matrix selection (default: 1).",
+    )
+    parser.add_argument(
+        "--workzone-source-camera-id",
+        type=int,
+        default=2,
+        choices=[0, 1, 2, 3],
+        help="Source camera id for workzone camera-frame inputs (default: 2, KITTI label/object camera).",
     )
     parser.add_argument(
         "--image-proj-output-dir",
@@ -555,15 +599,33 @@ def main() -> None:
                     ego_proj_frame = _ego_frame_for_payload(_safe_json(ego_path), args.ego_frame) if ego_path is not None else "fru"
 
                     for poly in workzone_polys:
-                        uv, valid = _project_fru_points_with_kitti_calib(poly, calib, args.workzone_frame)
+                        uv, valid = _project_fru_points_with_kitti_calib(
+                            poly,
+                            calib,
+                            args.workzone_frame,
+                            source_camera_id=args.workzone_source_camera_id,
+                            projection_camera_id=args.proj_camera_id,
+                        )
                         _draw_projected_polyline(image, uv, valid, bgr["workzone"], thickness)
 
                     for poly in lane_polys:
-                        uv, valid = _project_fru_points_with_kitti_calib(poly, calib, args.lane_frame)
+                        uv, valid = _project_fru_points_with_kitti_calib(
+                            poly,
+                            calib,
+                            args.lane_frame,
+                            source_camera_id=args.proj_camera_id,
+                            projection_camera_id=args.proj_camera_id,
+                        )
                         _draw_projected_polyline(image, uv, valid, bgr["lane"], thickness)
 
-                    for poly in ego_polys:
-                        uv, valid = _project_fru_points_with_kitti_calib(poly, calib, ego_proj_frame)
+                    for poly in ego_polys:                        
+                        uv, valid = _project_fru_points_with_kitti_calib(
+                            poly,
+                            calib,
+                            ego_proj_frame,
+                            source_camera_id=args.proj_camera_id,
+                            projection_camera_id=args.proj_camera_id,
+                        )
                         _draw_projected_polyline(image, uv, valid, bgr["ego"], thickness)
 
                     out_proj = args.image_proj_output_dir / f"{args.output_prefix}_{key}.png"
