@@ -202,25 +202,33 @@ def _match_triplets(workzone_dir: Path, lane_dir: Path, ego_dir: Path) -> List[T
     return [(k, workzone.get(k), lane.get(k), ego.get(k)) for k in keys]
 
 
-def _parse_kitti_calib_p1(calib_path: Path) -> np.ndarray:
+def _parse_kitti_calib(calib_path: Path) -> Dict[str, np.ndarray]:
     try:
         lines = calib_path.read_text(encoding="utf-8").splitlines()
     except OSError as exc:
         raise ValueError(f"Failed to read calib file: {calib_path}") from exc
 
+    calib: Dict[str, np.ndarray] = {}
     for line in lines:
         line = line.strip()
         if not line or ":" not in line:
             continue
         key, value = line.split(":", 1)
-        if key.strip() != "P1":
-            continue
         vals = np.asarray([float(v) for v in value.strip().split()], dtype=np.float64)
-        if vals.size != 12:
-            raise ValueError(f"P1 must contain 12 values in {calib_path}")
-        return vals.reshape(3, 4)
+        key = key.strip()
 
-    raise ValueError(f"P1 not found in calib file: {calib_path}")
+        if key.startswith("P") and vals.size == 12:
+            calib[key] = vals.reshape(3, 4)
+        elif key in {"R0_rect", "R_rect"} and vals.size == 9:
+            calib["R0_rect"] = vals.reshape(3, 3)
+        elif key.startswith("Tr_velo_to_cam") and vals.size == 12:
+            calib[key] = vals.reshape(3, 4)
+            if key == "Tr_velo_to_cam":
+                calib["Tr_velo_to_cam_default"] = calib[key]
+
+    if "P1" not in calib:
+        raise ValueError(f"P1 not found in calib file: {calib_path}")
+    return calib
 
 
 def _find_file_for_key(folder: Path, key: str, suffixes: List[str]) -> Optional[Path]:
@@ -246,6 +254,47 @@ def _project_camera_points(p1: np.ndarray, points_camera: np.ndarray) -> Tuple[n
     uv[valid, 0] = uvw[valid, 0] / uvw[valid, 2]
     uv[valid, 1] = uvw[valid, 1] / uvw[valid, 2]
     return uv, valid
+
+
+def _fru_to_flu(points: np.ndarray) -> np.ndarray:
+    if points.size == 0:
+        return points
+    return np.stack([points[:, 0], -points[:, 1], points[:, 2]], axis=1)
+
+
+def _project_fru_points_with_kitti_calib(
+    points_fru: np.ndarray,
+    calib: Dict[str, np.ndarray],
+    source_frame: str,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Project FRU points with KITTI calib.
+
+    - If source frame is camera_kitti, points are transformed directly to camera frame.
+    - Otherwise, points are treated as ego/ground frame and projected via Tr_velo_to_cam(+R0_rect).
+    """
+    p1 = calib["P1"]
+
+    if source_frame == "camera_kitti":
+        cam_pts = _fru_to_camera_kitti(points_fru)
+        return _project_camera_points(p1, cam_pts)
+
+    pts_flu = _fru_to_flu(points_fru)
+    xyz1 = np.concatenate([pts_flu, np.ones((pts_flu.shape[0], 1), dtype=np.float64)], axis=1)
+
+    tr = calib.get("Tr_velo_to_cam_1")
+    if tr is None:
+        tr = calib.get("Tr_velo_to_cam") or calib.get("Tr_velo_to_cam_default")
+
+    if tr is None:
+        # Fall back to direct FRU->camera conversion if no extrinsics are available.
+        cam_pts = _fru_to_camera_kitti(points_fru)
+        return _project_camera_points(p1, cam_pts)
+
+    cam_pts = (tr @ xyz1.T).T
+    r0 = calib.get("R0_rect")
+    if r0 is not None:
+        cam_pts = (r0 @ cam_pts.T).T
+    return _project_camera_points(p1, cam_pts)
 
 
 def _draw_projected_polyline(image: np.ndarray, uv: np.ndarray, valid_mask: np.ndarray, color_bgr: Tuple[int, int, int], thickness: int) -> None:
@@ -491,11 +540,11 @@ def main() -> None:
             image = cv2.imread(str(image_path))
             if image is not None:
                 try:
-                    p1 = _parse_kitti_calib_p1(calib_path)
+                    calib = _parse_kitti_calib(calib_path)
                 except ValueError:
-                    p1 = None
+                    calib = None
 
-                if p1 is not None:
+                if calib is not None:
                     thickness = max(1, int(round(line_width)))
                     bgr = {
                         "workzone": tuple(int(255 * c) for c in colors["workzone"][::-1]),
@@ -503,19 +552,18 @@ def main() -> None:
                         "ego": tuple(int(255 * c) for c in colors["ego"][::-1]),
                     }
 
+                    ego_proj_frame = _ego_frame_for_payload(_safe_json(ego_path), args.ego_frame) if ego_path is not None else "fru"
+
                     for poly in workzone_polys:
-                        cam_pts = _fru_to_camera_kitti(poly)
-                        uv, valid = _project_camera_points(p1, cam_pts)
+                        uv, valid = _project_fru_points_with_kitti_calib(poly, calib, args.workzone_frame)
                         _draw_projected_polyline(image, uv, valid, bgr["workzone"], thickness)
 
                     for poly in lane_polys:
-                        cam_pts = _fru_to_camera_kitti(poly)
-                        uv, valid = _project_camera_points(p1, cam_pts)
+                        uv, valid = _project_fru_points_with_kitti_calib(poly, calib, args.lane_frame)
                         _draw_projected_polyline(image, uv, valid, bgr["lane"], thickness)
 
                     for poly in ego_polys:
-                        cam_pts = _fru_to_camera_kitti(poly)
-                        uv, valid = _project_camera_points(p1, cam_pts)
+                        uv, valid = _project_fru_points_with_kitti_calib(poly, calib, ego_proj_frame)
                         _draw_projected_polyline(image, uv, valid, bgr["ego"], thickness)
 
                     out_proj = args.image_proj_output_dir / f"{args.output_prefix}_{key}.png"
